@@ -7,32 +7,30 @@ import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:flyer_chat_image_message/flyer_chat_image_message.dart';
 import 'package:flyer_chat_text_message/flyer_chat_text_message.dart';
 import 'package:flyer_chat_text_stream_message/flyer_chat_text_stream_message.dart';
-import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import 'connection_check.dart';
 import 'gemini_stream_manager.dart';
+import 'groq_client.dart';
 import 'hive_chat_controller.dart';
+import 'supabase_messages.dart';
 import 'widgets/composer_action_bar.dart';
 
 // Define the shared animation duration
 const Duration _kChunkAnimationDuration = Duration(milliseconds: 350);
 
 class Gemini extends StatefulWidget {
-  final String geminiApiKey;
+  final String groqApiKey;
 
-  const Gemini({super.key, required this.geminiApiKey});
+  const Gemini({super.key, required this.groqApiKey});
 
   @override
   GeminiState createState() => GeminiState();
 }
 
 class GeminiState extends State<Gemini> {
-  // Set to `true` to show a "Thinking..." message immediately.
-  // Set to `false` to wait for the first chunk before showing the message.
-  final bool _isThinkingModel = false;
-
   final _uuid = const Uuid();
   final _crossCache = CrossCache();
   final _scrollController = ScrollController();
@@ -41,19 +39,16 @@ class GeminiState extends State<Gemini> {
   final _currentUser = const User(id: 'me');
   final _agent = const User(id: 'agent');
 
-  late final GenerativeModel _model;
-  late ChatSession _chatSession;
-
   late final GeminiStreamManager _streamManager;
 
-  // Store scroll state per stream ID
   final Map<String, double> _initialScrollExtents = {};
   final Map<String, bool> _reachedTargetScroll = {};
 
-  // Streaming state management
   bool _isStreaming = false;
   StreamSubscription? _currentStreamSubscription;
   String? _currentStreamId;
+
+  bool _isReady = false;
 
   @override
   void initState() {
@@ -62,21 +57,17 @@ class GeminiState extends State<Gemini> {
       chatController: _chatController,
       chunkAnimationDuration: _kChunkAnimationDuration,
     );
+    _loadFromSupabase();
+  }
 
-    _model = GenerativeModel(
-      model: 'gemini-1.5-flash-latest',
-      apiKey: widget.geminiApiKey,
-      safetySettings: [
-        SafetySetting(HarmCategory.dangerousContent, HarmBlockThreshold.none),
-      ],
-    );
-
-    _chatSession = _model.startChat(
-      history: _chatController.messages
-          .whereType<TextMessage>()
-          .map((message) => Content.text(message.text))
-          .toList(),
-    );
+  Future<void> _loadFromSupabase() async {
+    try {
+      final messages = await fetchMessages();
+      await _chatController.setMessages(messages);
+    } catch (e) {
+      debugPrint('Supabase load error: $e');
+    }
+    if (mounted) setState(() => _isReady = true);
   }
 
   @override
@@ -136,8 +127,84 @@ class GeminiState extends State<Gemini> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    if (!_isReady) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('AI Business Mentor')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Gemini')),
+      appBar: AppBar(
+        title: const Text('AI Business Mentor'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.link),
+            tooltip: 'Check connection',
+            onPressed: () async {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(
+                  child: Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(),
+                          SizedBox(height: 16),
+                          Text('Checking connection...'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+              final results = await checkConnections();
+              if (!mounted) return;
+              Navigator.of(context).pop();
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Connection Check'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Supabase: ${results['Supabase'] == true ? "Connected" : "Failed"}',
+                        style: TextStyle(
+                          color: results['Supabase'] == true
+                              ? Colors.green
+                              : Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Groq: ${results['Groq'] == true ? "Connected" : "Failed"}',
+                        style: TextStyle(
+                          color: results['Groq'] == true
+                              ? Colors.green
+                              : Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: ChangeNotifierProvider.value(
         value: _streamManager,
         child: Chat(
@@ -172,7 +239,6 @@ class GeminiState extends State<Gemini> {
                     title: 'Clear all',
                     onPressed: () {
                       _chatController.setMessages([]);
-                      _chatSession = _model.startChat();
                     },
                     destructive: true,
                   ),
@@ -246,29 +312,38 @@ class GeminiState extends State<Gemini> {
   }
 
   void _handleMessageSend(String text) async {
+    final messageId = _uuid.v4();
+    final createdAt = DateTime.now().toUtc();
+
+    try {
+      await insertMessage(
+        id: messageId,
+        text: text,
+        isAi: false,
+        authorId: _currentUser.id,
+      );
+    } catch (e) {
+      debugPrint('Supabase insert user message error: $e');
+    }
+
     await _chatController.insertMessage(
       TextMessage(
-        id: _uuid.v4(),
+        id: messageId,
         authorId: _currentUser.id,
-        createdAt: DateTime.now().toUtc(),
+        createdAt: createdAt,
         text: text,
         metadata: isOnlyEmoji(text) ? {'isOnlyEmoji': true} : null,
       ),
     );
 
-    final content = Content.text(text);
-    _sendContent(content);
+    _sendToGroq(text);
   }
 
   void _handleAttachmentTap() async {
     final picker = ImagePicker();
-
     final image = await picker.pickImage(source: ImageSource.gallery);
-
     if (image == null) return;
-
     await _crossCache.downloadAndSave(image.path);
-
     await _chatController.insertMessage(
       ImageMessage(
         id: _uuid.v4(),
@@ -277,162 +352,109 @@ class GeminiState extends State<Gemini> {
         source: image.path,
       ),
     );
-
-    final bytes = await _crossCache.get(image.path);
-
-    final content = Content.data('image/jpeg', bytes);
-    _sendContent(content);
   }
 
-  void _sendContent(Content content) async {
-    // Generate a unique ID for the stream
+  void _sendToGroq(String userText) async {
     final streamId = _uuid.v4();
     _currentStreamId = streamId;
     TextStreamMessage? streamMessage;
-    Timer? thinkingTimer;
 
-    // A flag to ensure the message is created only once.
-    var messageInserted = false;
-
-    // Store scroll state per stream ID
     _reachedTargetScroll[streamId] = false;
+    setState(() => _isStreaming = true);
 
-    // Set streaming state
-    setState(() {
-      _isStreaming = true;
+    streamMessage = TextStreamMessage(
+      id: streamId,
+      authorId: _agent.id,
+      createdAt: DateTime.now().toUtc(),
+      streamId: streamId,
+    );
+    await _chatController.insertMessage(streamMessage);
+      _streamManager.startStream(streamId, streamMessage);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!_scrollController.hasClients || !mounted) return;
+      await _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.linearToEaseOut,
+      );
     });
 
-    // Helper to create and insert the message, ensuring it only happens once.
-    Future<void> createAndInsertMessage() async {
-      if (messageInserted || !mounted) return;
-      messageInserted = true;
-
-      // If the timer is still active, we beat it. Cancel it.
-      thinkingTimer?.cancel();
-
-      streamMessage = TextStreamMessage(
-        id: streamId,
-        authorId: _agent.id,
-        createdAt: DateTime.now().toUtc(),
-        streamId: streamId,
-      );
-      await _chatController.insertMessage(streamMessage!);
-      _streamManager.startStream(streamId, streamMessage!);
-    }
-
-    if (_isThinkingModel) {
-      // For thinking models, schedule the message insertion after a delay.
-      thinkingTimer = Timer(const Duration(milliseconds: 300), () async {
-        await createAndInsertMessage();
-        // When timer fires, message is inserted, scroll to the bottom.
-        // This is needed because we use shouldScrollToEndWhenAtBottom: false,
-        // due to custom scroll logic below, so we must also scroll to the
-        // thinking label manually.
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          if (!_scrollController.hasClients || !mounted) return;
-          await _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.linearToEaseOut,
-          );
+    final history = <Map<String, String>>[];
+    for (final m in _chatController.messages) {
+      if (m is TextMessage) {
+        history.add({
+          'role': m.authorId == _currentUser.id ? 'user' : 'assistant',
+          'content': m.text,
         });
-      });
+      }
     }
+    final messages = buildMessages(history, userText);
 
     try {
-      final response = _chatSession.sendMessageStream(content);
-
-      // Create a stream subscription that can be cancelled
-      _currentStreamSubscription = response.listen(
-        (chunk) async {
-          if (chunk.text != null) {
-            final textChunk = chunk.text!;
-            if (textChunk.isEmpty) return; // Skip empty chunks
-
-            // On the first valid chunk, ensure the message is inserted.
-            // This handles both non-thinking models and thinking models where
-            // the response arrives before the timer.
-            if (!messageInserted) {
-              await createAndInsertMessage();
-            }
-
-            // Ensure stream message exists before adding chunk
-            if (streamMessage == null) return;
-
-            // Send chunk to the manager - this triggers notifyListeners
-            _streamManager.addChunk(streamId, textChunk);
-
-            // Schedule scroll check after the frame rebuilds
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!_scrollController.hasClients || !mounted) return;
-
-              // Retrieve state for this specific stream
-              var initialExtent = _initialScrollExtents[streamId];
-              final reachedTarget = _reachedTargetScroll[streamId] ?? false;
-
-              if (reachedTarget) return; // Already scrolled to target
-
-              // Store initial extent after first chunk caused rebuild
-              initialExtent ??= _initialScrollExtents[streamId] =
-                  _scrollController.position.maxScrollExtent;
-
-              // Only scroll if the list is scrollable
-              if (initialExtent > 0) {
-                // Calculate target scroll position (copied from original logic)
-                final targetScroll =
-                    initialExtent + // Use the stored initial extent
-                    _scrollController.position.viewportDimension -
-                    MediaQuery.of(context).padding.bottom -
-                    168; // height of the composer + height of the app bar + visual buffer of 8
-
-                if (_scrollController.position.maxScrollExtent > targetScroll) {
-                  _scrollController.animateTo(
-                    targetScroll,
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.linearToEaseOut,
-                  );
-                  // Mark that we've reached the target for this stream
-                  _reachedTargetScroll[streamId] = true;
-                } else {
-                  // If we haven't reached target position yet, scroll to bottom
-                  _scrollController.animateTo(
-                    _scrollController.position.maxScrollExtent,
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.linearToEaseOut,
-                  );
-                }
+      final stream = streamChat(apiKey: widget.groqApiKey, messages: messages);
+      _currentStreamSubscription = stream.listen(
+        (textChunk) async {
+          if (textChunk.isEmpty || streamMessage == null) return;
+          _streamManager.addChunk(streamId, textChunk);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!_scrollController.hasClients || !mounted) return;
+            var initialExtent = _initialScrollExtents[streamId];
+            final reachedTarget = _reachedTargetScroll[streamId] ?? false;
+            if (reachedTarget) return;
+            initialExtent ??= _initialScrollExtents[streamId] =
+                _scrollController.position.maxScrollExtent;
+            if (initialExtent > 0) {
+              final targetScroll =
+                  initialExtent +
+                  _scrollController.position.viewportDimension -
+                  MediaQuery.of(context).padding.bottom -
+                  168;
+              if (_scrollController.position.maxScrollExtent > targetScroll) {
+                _scrollController.animateTo(
+                  targetScroll,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.linearToEaseOut,
+                );
+                _reachedTargetScroll[streamId] = true;
+              } else {
+                _scrollController.animateTo(
+                  _scrollController.position.maxScrollExtent,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.linearToEaseOut,
+                );
               }
-            });
-          }
+            }
+          });
         },
         onDone: () async {
-          thinkingTimer?.cancel();
-          // Stream completed successfully (only if message was created)
           if (streamMessage != null) {
+            final state = _streamManager.getState(streamId);
+            if (state is StreamStateStreaming && state.accumulatedText.isNotEmpty) {
+              try {
+                await insertMessage(
+                  id: streamId,
+                  text: state.accumulatedText,
+                  isAi: true,
+                  authorId: _agent.id,
+                );
+              } catch (e) {
+                debugPrint('Supabase insert AI message error: $e');
+              }
+            }
             await _streamManager.completeStream(streamId);
           }
-
-          // Reset streaming state
-          if (mounted) {
-            setState(() {
-              _isStreaming = false;
-            });
-          }
+          if (mounted) setState(() => _isStreaming = false);
           _currentStreamSubscription = null;
           _currentStreamId = null;
-
-          // Clean up scroll state for this stream ID
           _initialScrollExtents.remove(streamId);
           _reachedTargetScroll.remove(streamId);
         },
         onError: (error) async {
-          thinkingTimer?.cancel();
           _handleStreamError(streamId, error, streamMessage);
         },
       );
     } catch (error) {
-      thinkingTimer?.cancel();
-      // Catch other potential errors during stream processing
       _handleStreamError(streamId, error, streamMessage);
     }
   }

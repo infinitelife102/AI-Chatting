@@ -1,36 +1,34 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'api/api.dart';
-import 'api_get_chat_id.dart';
-import 'api_get_initial_messages.dart';
-import 'basic.dart';
+import 'connection_check.dart';
 import 'gemini.dart';
-import 'local.dart';
-import 'pagination_newer.dart';
-import 'pagination_older.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting();
   await dotenv.load();
+
+  await Supabase.initialize(
+    url: dotenv.env['SUPABASE_URL'] ?? '',
+    anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
+  );
+
   await Hive.initFlutter();
   await Hive.openBox('chat');
-  runApp(FlyerChat());
+  runApp(const AIBusinessMentorApp());
 }
 
-class FlyerChat extends StatelessWidget {
-  const FlyerChat({super.key});
+class AIBusinessMentorApp extends StatelessWidget {
+  const AIBusinessMentorApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flyer Chat',
+      title: 'AI Business Mentor',
       theme: ThemeData.from(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.green,
@@ -43,261 +41,77 @@ class FlyerChat extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      home: const FlyerChatHomePage(),
-    );
-  }
-}
-
-class FlyerChatHomePage extends StatefulWidget {
-  const FlyerChatHomePage({super.key});
-
-  @override
-  State<FlyerChatHomePage> createState() => _FlyerChatHomePageState();
-}
-
-class _FlyerChatHomePageState extends State<FlyerChatHomePage> {
-  final _dio = Dio();
-
-  final _chatIdController = TextEditingController(
-    text: dotenv.env['DEFAULT_CHAT_ID'] ?? '',
-  );
-  final _geminiApiKeyController = TextEditingController(
-    text: dotenv.env['GEMINI_API_KEY'] ?? '',
-  );
-
-  UserID _currentUserId = 'john';
-
-  @override
-  void dispose() {
-    _geminiApiKeyController.dispose();
-    _chatIdController.dispose();
-    _dio.close(force: true);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const SizedBox(height: 8),
-              SegmentedButton<UserID>(
-                segments: const <ButtonSegment<UserID>>[
-                  ButtonSegment<UserID>(value: 'john', label: Text('John')),
-                  ButtonSegment<UserID>(value: 'jane', label: Text('Jane')),
-                ],
-                selected: <UserID>{_currentUserId},
-                onSelectionChanged: (Set<UserID> newSender) {
-                  setState(() {
-                    _currentUserId = newSender.first;
-                  });
-                },
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _chatIdController,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: 'chat id',
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ElevatedButton(
-                    onPressed: () {
-                      getInitialMessages(_dio, chatId: _chatIdController.text)
-                          .then((messages) {
-                            if (mounted && context.mounted) {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (context) => Api(
-                                    currentUserId: _currentUserId,
-                                    chatId: _chatIdController.text,
-                                    initialMessages: messages,
-                                    dio: _dio,
-                                  ),
-                                ),
-                              );
-                            }
-                          })
-                          .catchError((error) {
-                            if (mounted && context.mounted) {
-                              debugPrint(error.toString());
-                              showDialog(
-                                context: context,
-                                builder: (BuildContext context) {
-                                  return AlertDialog(
-                                    title: const Text('Error'),
-                                    content: const Text(
-                                      'Make sure the chat ID is correct',
+      home: Builder(
+        builder: (context) {
+          final groqKey = dotenv.env['GROQ_API_KEY']?.trim() ?? '';
+          if (groqKey.isEmpty) {
+            return Scaffold(
+              appBar: AppBar(title: const Text('AI Business Mentor')),
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        'Set GROQ_API_KEY in your .env file.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 16),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          final results = await checkConnections();
+                          if (!context.mounted) return;
+                          showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Connection Check'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Supabase: ${results['Supabase'] == true ? "Connected" : "Failed"}',
+                                    style: TextStyle(
+                                      color: results['Supabase'] == true
+                                          ? Colors.green
+                                          : Colors.red,
+                                      fontWeight: FontWeight.w500,
                                     ),
-                                    actions: <Widget>[
-                                      TextButton(
-                                        child: const Text('OK'),
-                                        onPressed: () =>
-                                            Navigator.of(context).pop(),
-                                      ),
-                                    ],
-                                  );
-                                },
-                              );
-                            }
-                          });
-                    },
-                    child: const Text('api'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        builder: (BuildContext context) {
-                          return AlertDialog(
-                            title: const Text('Confirmation'),
-                            content: const Text(
-                              'Are you sure you want to generate a new chat ID?',
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Groq: ${results['Groq'] == true ? "Connected" : "Failed"}',
+                                    style: TextStyle(
+                                      color: results['Groq'] == true
+                                          ? Colors.green
+                                          : Colors.red,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(),
+                                  child: const Text('OK'),
+                                ),
+                              ],
                             ),
-                            actions: <Widget>[
-                              TextButton(
-                                child: const Text('Cancel'),
-                                onPressed: () => Navigator.of(context).pop(),
-                              ),
-                              TextButton(
-                                child: const Text('Yes'),
-                                onPressed: () {
-                                  Navigator.of(context).pop();
-                                  getChatId(_dio).then((chatId) {
-                                    if (mounted) {
-                                      _chatIdController.text = chatId;
-                                    }
-                                  });
-                                },
-                              ),
-                            ],
                           );
                         },
-                      );
-                    },
-                    child: const Text('generate chat id'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      Clipboard.setData(
-                        ClipboardData(text: _chatIdController.text),
-                      );
-                    },
-                    child: const Text('copy chat id'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  'In order to test the api, you need to generate a chat id. Chat will be reset after 24 hours. Use the same chat id to access chat on different devices.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(
-                width: 200,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Divider(color: Colors.grey, thickness: 1),
-                ),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (context) => Local(dio: _dio)),
-                  );
-                },
-                child: const Text('local'),
-              ),
-              const SizedBox(
-                width: 200,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Divider(color: Colors.grey, thickness: 1),
-                ),
-              ),
-              SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _geminiApiKeyController,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: 'gemini api key',
+                        icon: const Icon(Icons.link),
+                        label: const Text('Check connection'),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          Gemini(geminiApiKey: _geminiApiKeyController.text),
-                    ),
-                  );
-                },
-                child: const Text('gemini'),
-              ),
-              const SizedBox(height: 8),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  'In order to test the AI example, you need to provide your own Gemini API key',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const SizedBox(
-                width: 200,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Divider(color: Colors.grey, thickness: 1),
-                ),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const PaginationOlder(),
-                    ),
-                  );
-                },
-                child: const Text('pagination (get older)'),
-              ),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => const PaginationNewer(),
-                  ),
-                ),
-                child: const Text('pagination (get newer)'),
-              ),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(
-                    context,
-                  ).push(MaterialPageRoute(builder: (context) => Basic()));
-                },
-                child: const Text('basic'),
-              ),
-            ],
-          ),
-        ),
+            );
+          }
+          return Gemini(groqApiKey: groqKey);
+        },
       ),
     );
   }
