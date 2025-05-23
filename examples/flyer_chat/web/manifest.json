@@ -1,6 +1,6 @@
 {
-    "name": "flyer_chat",
-    "short_name": "flyer_chat",
+    "name": "AI_Chat",
+    "short_name": "AI_Chat",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

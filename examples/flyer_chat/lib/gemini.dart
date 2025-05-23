@@ -128,9 +128,8 @@ class GeminiState extends State<Gemini> {
     final theme = Theme.of(context);
 
     if (!_isReady) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('AI Business Mentor')),
-        body: const Center(child: CircularProgressIndicator()),
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -237,8 +236,13 @@ class GeminiState extends State<Gemini> {
                   ComposerActionButton(
                     icon: Icons.delete_sweep,
                     title: 'Clear all',
-                    onPressed: () {
-                      _chatController.setMessages([]);
+                    onPressed: () async {
+                      try {
+                        await deleteAllMessages();
+                      } catch (e) {
+                        debugPrint('Supabase clear error: $e');
+                      }
+                      await _chatController.setMessages([]);
                     },
                     destructive: true,
                   ),

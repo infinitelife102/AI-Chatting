@@ -28,7 +28,7 @@ class AIBusinessMentorApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AI Business Mentor',
+      title: 'AI_Chat',
       theme: ThemeData.from(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.green,
@@ -46,7 +46,7 @@ class AIBusinessMentorApp extends StatelessWidget {
           final groqKey = dotenv.env['GROQ_API_KEY']?.trim() ?? '';
           if (groqKey.isEmpty) {
             return Scaffold(
-              appBar: AppBar(title: const Text('AI Business Mentor')),
+              appBar: AppBar(title: const Text('AI_Chat')),
               body: Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),

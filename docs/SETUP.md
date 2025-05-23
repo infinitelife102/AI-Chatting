@@ -6,7 +6,7 @@ Step-by-step setup for running the AI Business Mentor app locally.
 
 ```bash
 git clone <repository-url>
-cd Gemini-Chatting/examples/flyer_chat
+cd AI-Chatting/examples/flyer_chat
 flutter pub get
 ```
 

@@ -61,3 +61,11 @@ Future<Map<String, dynamic>> insertMessage({
   final res = await client.from(_tableName).insert(map).select().single();
   return res;
 }
+
+/// Deletes all messages from Supabase. Call this when clearing the chat.
+/// Uses created_at so it works regardless of id type (e.g. UUID).
+Future<void> deleteAllMessages() async {
+  final client = Supabase.instance.client;
+  // Match all rows: created_at >= epoch (RLS disabled = allowed)
+  await client.from(_tableName).delete().gte('created_at', '1970-01-01T00:00:00Z');
+}
