@@ -41,15 +41,9 @@ class GeminiStreamManager extends ChangeNotifier {
       return; // Stream might have finished
     }
 
-    // Trim single trailing newline from the incoming chunk if present.
-    var processedChunk = chunk;
-    if (processedChunk.endsWith('\n') && !processedChunk.endsWith('\n\n')) {
-      processedChunk = processedChunk.substring(0, processedChunk.length - 1);
-    }
-
-    // Use the potentially processed chunk
+    // Keep newlines as-is so numbered lists (1. 2. 3.) and paragraphs display correctly.
     _accumulatedTexts[streamId] =
-        (_accumulatedTexts[streamId] ?? '') + processedChunk;
+        (_accumulatedTexts[streamId] ?? '') + chunk;
 
     _streamStates[streamId] = StreamStateStreaming(
       _accumulatedTexts[streamId]!,

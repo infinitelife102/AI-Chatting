@@ -24,8 +24,8 @@ Be respectful and constructive. Report issues and suggest improvements in a clea
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/Gemini-Chatting.git
-   cd Gemini-Chatting
+   git clone https://github.com/infinitelife102/AI-Chatting.git
+   cd AI-Chatting
    ```
 
 2. Open the app package and install dependencies:
