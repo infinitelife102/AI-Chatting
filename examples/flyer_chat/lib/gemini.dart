@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cross_cache/cross_cache.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_chat_core/flutter_chat_core.dart';
@@ -396,7 +397,9 @@ class GeminiState extends State<Gemini> {
     final messages = buildMessages(history, userText);
 
     try {
-      final stream = streamChat(apiKey: widget.groqApiKey, messages: messages);
+      final stream = kIsWeb
+          ? streamChatViaProxy(baseUrl: Uri.base.origin, messages: messages)
+          : streamChat(apiKey: widget.groqApiKey, messages: messages);
       _currentStreamSubscription = stream.listen(
         (textChunk) async {
           if (textChunk.isEmpty || streamMessage == null) return;

@@ -82,3 +82,67 @@ Stream<String> streamChat({
     client.close();
   }
 }
+
+/// Streams chat completion via your backend proxy (e.g. Vercel /api/stream-chat).
+/// Use this on web so GROQ_API_KEY is never sent to the client.
+/// [baseUrl] should be the app origin, e.g. `Uri.base.origin` on web.
+Stream<String> streamChatViaProxy({
+  required String baseUrl,
+  required List<Map<String, String>> messages,
+}) async* {
+  final uri = Uri.parse(baseUrl).replace(path: 'api/stream-chat');
+  final body = jsonEncode({'messages': messages});
+
+  final request = http.Request('POST', uri)
+    ..headers['Content-Type'] = 'application/json'
+    ..body = body;
+
+  final client = http.Client();
+  try {
+    final response = await client.send(request);
+
+    if (response.statusCode != 200) {
+      final bytes = await response.stream.toBytes();
+      final str = utf8.decode(bytes);
+      throw Exception('Chat API error ${response.statusCode}: $str');
+    }
+
+    var buffer = '';
+    await for (final chunk in response.stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      final lines = buffer.split('\n');
+      buffer = lines.removeLast();
+      for (final line in lines) {
+        if (line.startsWith('data: ')) {
+          final data = line.substring(6).trim();
+          if (data == '[DONE]') continue;
+          try {
+            final json = jsonDecode(data) as Map<String, dynamic>;
+            final choices = json['choices'] as List<dynamic>?;
+            final delta = choices?.isNotEmpty == true
+                ? (choices!.first as Map<String, dynamic>)['delta'] as Map<String, dynamic>?
+                : null;
+            final content = delta?['content'] as String?;
+            if (content != null && content.isNotEmpty) yield content;
+          } catch (_) {}
+        }
+      }
+    }
+    if (buffer.trim().startsWith('data: ')) {
+      final data = buffer.substring(6).trim();
+      if (data != '[DONE]') {
+        try {
+          final json = jsonDecode(data) as Map<String, dynamic>;
+          final choices = json['choices'] as List<dynamic>?;
+          final delta = choices?.isNotEmpty == true
+              ? (choices!.first as Map<String, dynamic>)['delta'] as Map<String, dynamic>?
+              : null;
+          final content = delta?['content'] as String?;
+          if (content != null && content.isNotEmpty) yield content;
+        } catch (_) {}
+      }
+    }
+  } finally {
+    client.close();
+  }
+}

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
@@ -44,7 +45,8 @@ class AIBusinessMentorApp extends StatelessWidget {
       home: Builder(
         builder: (context) {
           final groqKey = dotenv.env['GROQ_API_KEY']?.trim() ?? '';
-          if (groqKey.isEmpty) {
+          // On web, chat uses /api/stream-chat proxy so client does not need GROQ_API_KEY.
+          if (groqKey.isEmpty && !kIsWeb) {
             return Scaffold(
               appBar: AppBar(title: const Text('AI_Chat')),
               body: Center(
