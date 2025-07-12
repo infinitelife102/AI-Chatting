@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "outputDirectory": "examples/flyer_chat/build/web",
+  "framework": null,
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}
