@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "buildCommand": "cd examples/flyer_chat && flutter pub get && flutter build web",
   "outputDirectory": "examples/flyer_chat/build/web",
   "framework": null,
   "rewrites": [
